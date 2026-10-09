@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>6G THz Hybrid AI-EKF / RIS Adaptive Real-Time Control Core Dashboard</title>
+    <script src="/kalman/chart.umd.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --panel-dark: #1e293b;
+            --border-glow: #38bdf8;
+            --text-light: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-purple: #a855f7;
+            --accent-yellow: #eab308;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .control-panel {
+            background-color: var(--panel-dark);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            height: fit-content;
+        }
+
+        h2, h3 {
+            margin-top: 0;
+            color: var(--text-light);
+            border-bottom: 2px solid #334155;
+            padding-bottom: 8px;
+        }
+
+        h3 { margin-top: 25px; }
+
+        .control-group { margin-bottom: 20px; }
+
+        label {
+            display: block;
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            accent-color: var(--border-glow);
+        }
+
+        .value-display {
+            float: right;
+            color: var(--border-glow);
+            font-family: monospace;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary { background-color: var(--border-glow); color: var(--bg-dark); }
+        .btn-primary:hover { background-color: #7dd3fc; }
+        .btn-danger { background-color: var(--accent-red); color: white; }
+        .btn-danger.active { background-color: #b91c1c; box-shadow: 0 0 10px var(--accent-red); }
+        .btn-secondary { background-color: #475569; color: white; }
+        .btn-secondary:hover { background-color: #64748b; }
+        .btn-success { background-color: var(--accent-green); color: white; }
+        .btn-success:hover { background-color: #34d399; }
+
+        .btn-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .scene-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            background: rgba(56, 189, 248, 0.08);
+            border-left: 3px solid var(--border-glow);
+            padding: 8px 10px;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            line-height: 1.4;
+        }
+
+        .workspace {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .telemetry-row {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 12px;
+        }
+
+        .metric-card {
+            background-color: var(--panel-dark);
+            border-left: 4px solid var(--border-glow);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            border-left-width: 4px;
+        }
+
+        .metric-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .metric-value { font-size: 1.25rem; font-weight: bold; font-family: monospace; margin-top: 5px; }
+
+        .canvas-container {
+            background-color: var(--panel-dark);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 15px;
+            height: calc(100vh - 340px);
+            min-height: 520px;
+            position: relative;
+        }
+
+        #spatial-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+        }
+
+        #spatial-canvas.dragging { cursor: grabbing; }
+
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .chart-card {
+            background-color: var(--panel-dark);
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 15px;
+            height: 260px;
+            position: relative;
+        }
+
+        .ai-spec-table {
+            width: 100%;
+            font-size: 0.85rem;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+
+        .ai-spec-table th, .ai-spec-table td {
+            text-align: left;
+            padding: 8px 6px;
+            border-bottom: 1px solid #334155;
+        }
+
+        .ai-spec-table th { color: var(--text-muted); }
+        .ai-spec-table td { font-family: monospace; }
+
+        /* Info icon buttons */
+        .info-btn {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: rgba(56, 189, 248, 0.15);
+            border: 1px solid rgba(56, 189, 248, 0.5);
+            color: #38bdf8;
+            font-size: 11px;
+            font-weight: bold;
+            font-family: serif;
+            line-height: 14px;
+            text-align: center;
+            cursor: pointer;
+            z-index: 5;
+            transition: background 0.15s;
+        }
+        .info-btn:hover {
+            background: rgba(56, 189, 248, 0.4);
+            color: #0f172a;
+        }
+        .metric-card { position: relative; }
+
+        /* Modal */
+        .info-modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(15, 23, 42, 0.85);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .info-modal-backdrop.open { display: flex; }
+        .info-modal {
+            background: #1e293b;
+            border: 1px solid #38bdf8;
+            border-left: 4px solid #38bdf8;
+            border-radius: 10px;
+            max-width: 640px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            padding: 24px 28px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        }
+        .info-modal h3 {
+            margin: 0 0 16px 0;
+            color: #38bdf8;
+            font-size: 1.1rem;
+            border-bottom: 1px solid #334155;
+            padding-bottom: 8px;
+        }
+        .info-modal h4 {
+            margin: 18px 0 6px 0;
+            color: #eab308;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .info-modal p, .info-modal li {
+            font-size: 0.9rem;
+            line-height: 1.55;
+            color: #cbd5e1;
+            margin: 6px 0;
+        }
+        .info-modal code {
+            background: #0f172a;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 0.82rem;
+            color: #22d3ee;
+        }
+        .info-modal ul { padding-left: 20px; }
+        .info-modal .close-btn {
+            float: right;
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 1.4rem;
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            margin: -6px -6px 0 0;
+        }
+        .info-modal .close-btn:hover { color: #f8fafc; }
+        .info-modal .meta-line {
+            font-size: 0.78rem;
+            color: #64748b;
+            font-family: monospace;
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px dashed #334155;
+        }
+
+        /* Header block wrappers need position:relative for their ⓘ */
+        .header-block { position: relative; }
+
+        /* Context menu (right-click) */
+        #context-menu {
+            display: none;
+            position: fixed;
+            z-index: 900;
+            background: #1e293b;
+            border: 1px solid #38bdf8;
+            border-radius: 8px;
+            padding: 6px 0;
+            min-width: 220px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+            font-size: 0.85rem;
+            color: #f8fafc;
+        }
+        #context-menu.open { display: block; }
+        #context-menu .ctx-item {
+            padding: 7px 14px;
+            cursor: pointer;
+            user-select: none;
+        }
+        #context-menu .ctx-item:hover {
+            background: rgba(56, 189, 248, 0.15);
+        }
+        #context-menu .ctx-selected {
+            color: #22d3ee;
+            font-weight: bold;
+        }
+        #context-menu .ctx-selected::before {
+            content: "● ";
+            color: #22d3ee;
+        }
+        #context-menu .ctx-radio:not(.ctx-selected)::before {
+            content: "○ ";
+            color: #64748b;
+        }
+        #context-menu .ctx-section {
+            padding: 6px 14px 3px 14px;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #64748b;
+            margin-top: 4px;
+            border-top: 1px solid #334155;
+        }
+        #context-menu .ctx-danger {
+            color: #ef4444;
+            margin-top: 4px;
+            border-top: 1px solid #334155;
+        }
+        #context-menu .ctx-danger:hover {
+            background: rgba(239, 68, 68, 0.15);
+        }
+        #context-menu .ctx-slider-row {
+            padding: 6px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        #context-menu .ctx-slider-row input[type="range"] {
+            flex: 1;
+            accent-color: #38bdf8;
+        }
+        #context-menu .ctx-slider-row span {
+            font-family: monospace;
+            color: #38bdf8;
+            min-width: 58px;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+
+<div style="max-width: 1600px; margin: 0 auto 20px auto; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border: 1px solid #334155; border-left: 4px solid #38bdf8; border-radius: 12px; padding: 18px 24px;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 320px;">
+            <div style="font-size: 0.75rem; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.08em; font-weight: bold; margin-bottom: 6px;">
+                Companion Artifact — NSF GRA Research Brief
+            </div>
+            <h1 style="margin: 0 0 8px 0; font-size: 1.15rem; color: #f8fafc;">
+                Hybrid AI-Assisted 3-State EKF for THz Beam Tracking &amp; RIS Handover
+            </h1>
+            <div style="margin: 0 0 10px 0; color: #94a3b8; font-size: 0.85rem; line-height: 1.5;">
+                Live productionization of the 2-state linear baseline validated in the research brief.
+                Extends the Kalman formulation to a 3-state EKF tracking <code style="color:#eab308;">[θ, ω, R]</code> with a non-linear Cartesian
+                measurement model <code style="color:#eab308;">h(x) = [R·cosθ, R·sinθ]</code> and analytic Jacobian. The GRU predictor from
+                <code style="color:#22d3ee;">beam_tracker.py</code> is exported to ONNX Runtime and drives an RIS-handover state machine.
+            </div>
+            <div class="header-block" style="margin: 0; color: #64748b; font-size: 0.78rem; line-height: 1.5; border-top: 1px dashed #334155; padding-top: 8px;">
+                <div class="info-btn" data-info="header_topology">i</div>
+                <strong style="color:#94a3b8;">Compute Topology Note.</strong>
+                The deployed GRU runs on CPU deliberately. At ~2,000 parameters, the workload has insufficient SIMT parallelism
+                to amortize host-to-device transfer overhead, and per-request inference latency on CPU is already sub-millisecond.
+                This mirrors the eventual RFSoC deployment, where the same rationale drives mapping to PL fabric rather than a
+                GPU co-processor. GPU execution is validated separately in the offline baseline (<code>beam_tracker.py</code>), where
+                CUDA serves as a reference path ahead of HLS synthesis.
+            </div>
+            <div class="header-block" style="margin: 10px 0 0 0; color: #64748b; font-size: 0.78rem; line-height: 1.5; border-top: 1px dashed #334155; padding-top: 8px;">
+                <div class="info-btn" data-info="header_rfsoc">i</div>
+                <strong style="color:#94a3b8;">Live RFSoC Integration Path.</strong>
+                The <code>/api/kalman-step</code> endpoint accepts LOS/RIS geometry as a JSON payload, so an
+                RFSoC-side UDP forwarder can replace the scene simulator without modifying the backend.
+                Feeding real measurements from an RFSoC-class device — for example, the XCZU48DR testbed — into
+                this pipeline would let the dashboard serve as a live diagnostic for the scenarios in
+                Kokkoniemi et al.: LOS vs. RIS SNR decomposition under 140 GHz propagation, Kalman gain behavior
+                as the filter absorbs bistatic-RIS path loss (n = 4 for equidistant geometry, converging to
+                n = 2 as the RIS approaches either endpoint), and GRU blockage predictions evaluated against
+                measured obstructions in a 10–100 m SCBS deployment. The output panels would show whether the
+                EKF's adaptive R_k logic correctly tracks the paper's 5–12 dB noise figure regime, and whether
+                the GRU transfers from its synthetic training distribution to empirical sub-THz measurements.
+                This is the deployment-validation step that converts a behavioral baseline into a
+                hardware-anchored result.
+            </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; min-width: 200px;">
+            <a href="https://drive.google.com/file/d/1Tau8wOkvmGhhrYPb-mtmFUj53C6eWpk1/view?usp=sharing"
+               target="_blank" rel="noopener"
+               style="display: block; text-align: center; padding: 10px 16px; background: #38bdf8; color: #0f172a; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 0.9rem;">
+                📄 View Research Brief (PDF)
+            </a>
+            <button id="snapshot-btn"
+                    style="display: block; width: 100%; padding: 10px 16px; background: #10b981; color: white; border: none; border-radius: 6px; font-weight: bold; font-size: 0.9rem; cursor: pointer;">
+                📸 Download Snapshot PNG
+            </button>
+            <div style="font-size: 0.7rem; color: #64748b; text-align: center; line-height: 1.4;">
+                Snapshot captures the last ~12 seconds<br>of the live telemetry loop.
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="dashboard-container">
+    <aside class="control-panel">
+        <h2>System Controls</h2>
+
+        <div class="control-group">
+            <label>Aerial Jitter Amplitude <span class="value-display" id="jitter-val">1.2 mrad p-p</span></label>
+            <input type="range" id="jitter-slider" min="0" max="8" step="0.1" value="1.2">
+        </div>
+
+        <div class="control-group">
+            <label>Platform Sway Amplitude <span class="value-display" id="sway-val">4.0 mrad</span></label>
+            <input type="range" id="sway-slider" min="0.0" max="8" step="0.1" value="4.0">
+        </div>
+
+        <div class="control-group">
+            <label>Channel Bandwidth
+                <span class="value-display" id="bandwidth-val">2.0 GHz</span>
+            </label>
+            <input type="range" id="bandwidth-slider" min="1" max="10" step="0.5" value="2.0">
+        </div>
+
+        <h3>Scene Editor</h3>
+        <div class="scene-hint">
+            Drag the aerial node, RIS surfaces, or blockers on the canvas to reroute the beam live.
+            <strong style="color:#38bdf8;">Right-click</strong> any object for motion, physics, and info options.
+        </div>
+
+        <div class="btn-row">
+            <button class="btn btn-primary" id="add-ris-btn">+ Add RIS</button>
+            <button class="btn btn-danger" id="add-blocker-btn">+ Add Blocker</button>
+        </div>
+        <button class="btn btn-secondary" id="add-absorption-btn" style="background:#a16207;">+ Add Absorption Zone</button>
+        <button class="btn btn-secondary" id="clear-scene-btn">Clear Extra Objects</button>
+
+        <h3 style="position: relative;">
+            AI-EKF Specifications
+            <span class="info-btn" data-info="spec_table" style="top: 8px; right: 0;">i</span>
+        </h3>
+
+        <div class="control-group">
+            <label>GRU Lookback Window
+                <span class="value-display" id="window-size-val">10</span>
+            </label>
+            <select id="window-size-select" style="width:100%; padding:8px; border-radius:6px; background:#0f172a; color:#f8fafc; border:1px solid #334155; font-family:monospace;">
+                <option value="5">5 samples</option>
+                <option value="8">8 samples</option>
+                <option value="10" selected>10 samples</option>
+                <option value="12">12 samples</option>
+                <option value="16">16 samples</option>
+            </select>
+        </div>
+
+        <table class="ai-spec-table">
+            <thead>
+                <tr><th>Component</th><th>Dimension/Type</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Input State</td><td>16x1 Historical SNR</td></tr>
+                <tr><td>Core Target</td><td>Non-Linear EKF Matrix</td></tr>
+                <tr><td>AI Blockage NN</td><td>GRU (16 Hidden Units)</td></tr>
+                <tr><td>Math Platform</td><td>AMD RFSoC PL Slices</td></tr>
+                <tr><td>Bit Precision</td><td>ap_fixed&lt;32,12&gt; Target</td></tr>
+            </tbody>
+        </table>
+
+        <div style="margin-top: 25px;">
+            <button class="btn btn-primary" id="sim-toggle-btn">Pause Simulation Loop</button>
+            <button class="btn btn-secondary" id="reset-btn">Reset EKF State</button>
+        </div>
+    </aside>
+
+    <main class="workspace">
+        <div class="telemetry-row">
+            <div class="metric-card" style="border-left-color: var(--border-glow);" data-info="metric_snr">
+                <div class="info-btn" data-info="metric_snr">i</div>
+                <div class="metric-label">SNR</div>
+                <div class="metric-value" id="ui-snr">30.00 dB</div>
+            </div>
+            <div class="metric-card" style="border-left-color: var(--accent-yellow);" data-info="metric_prob">
+                <div class="info-btn" data-info="metric_prob">i</div>
+                <div class="metric-label">AI P(Blockage)</div>
+                <div class="metric-value" id="ui-prob">0.02</div>
+            </div>
+            <div class="metric-card" style="border-left-color: var(--accent-purple);" data-info="metric_link">
+                <div class="info-btn" data-info="metric_link">i</div>
+                <div class="metric-label">Active Link Route</div>
+                <div class="metric-value" id="ui-link" style="color: var(--accent-purple); font-size: 1rem;">LOS</div>
+            </div>
+            <div class="metric-card" style="border-left-color: var(--accent-green);" data-info="metric_gain">
+                <div class="info-btn" data-info="metric_gain">i</div>
+                <div class="metric-label">‖K‖_F (3×2)</div>
+                <div class="metric-value" id="ui-gain">0.412</div>
+            </div>
+            <div class="metric-card" style="border-left-color: #22d3ee;" data-info="metric_omega">
+                <div class="info-btn" data-info="metric_omega">i</div>
+                <div class="metric-label">ω̂ (Angular Vel)</div>
+                <div class="metric-value" id="ui-omega">0.0000 rad/s</div>
+            </div>
+            <div class="metric-card" style="border-left-color: #f97316;" data-info="metric_range">
+                <div class="info-btn" data-info="metric_range">i</div>
+                <div class="metric-label">R̂ (Range Est)</div>
+                <div class="metric-value" id="ui-range">20.00 m</div>
+            </div>
+            <div class="metric-card" style="border-left-color: #22d3ee;" data-info="metric_neff">
+                <div class="info-btn" data-info="metric_neff">i</div>
+                <div class="metric-label">n_eff (RIS PL exponent)</div>
+                <div class="metric-value" id="ui-neff" style="font-size: 1.1rem;">2.000</div>
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <div class="metric-label" style="position: absolute; top: 15px; left: 20px; z-index: 10; font-weight: bold;">
+                Live Spatial Beam Orientation Alignment Tracking Loop Mapping
+            </div>
+            <canvas id="spatial-canvas"></canvas>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card" data-info="chart_tracking">
+                <div class="info-btn" data-info="chart_tracking">i</div>
+                <canvas id="chart-tracking"></canvas>
+            </div>
+            <div class="chart-card" data-info="chart_covariance">
+                <div class="info-btn" data-info="chart_covariance">i</div>
+                <canvas id="chart-covariance"></canvas>
+            </div>
+            <div class="chart-card" data-info="chart_snr">
+                <div class="info-btn" data-info="chart_snr">i</div>
+                <canvas id="chart-snr"></canvas>
+            </div>
+            <div class="chart-card" data-info="chart_neff">
+                <div class="info-btn" data-info="chart_neff">i</div>
+                <canvas id="chart-neff"></canvas>
+            </div>
+        </div>
+    </main>
+</div>
+
+<!-- Right-click context menu (populated by dashboard.js) -->
+<div id="context-menu"></div>
+
+<!-- Modal must come BEFORE the scripts so getElementById finds it -->
+<div id="info-modal-backdrop" class="info-modal-backdrop">
+    <div class="info-modal" id="info-modal-content">
+        <button class="close-btn" id="info-modal-close">×</button>
+        <div id="info-modal-body"></div>
+    </div>
+</div>
+
+<script src="/kalman/dashboard.js"></script>
+
+<script>
+    // Dropdown label updater
+    document.getElementById('window-size-select').addEventListener('change', (e) => {
+        document.getElementById('window-size-val').innerText = e.target.value;
+    });
+
+    // Snapshot download button — sends the session_id so the server
+    // renders the correct session's history.
+    document.getElementById('snapshot-btn').addEventListener('click', () => {
+        const sid = sessionStorage.getItem('kalman_session_id') || '__default__';
+        const url = '/kalman/snapshot.png?session_id=' + encodeURIComponent(sid);
+        window.open(url, '_blank');
+    });
+
+    document.getElementById('bandwidth-slider').addEventListener('input', (e) => {
+        document.getElementById('bandwidth-val').innerText =
+            parseFloat(e.target.value).toFixed(1) + ' GHz';
+    });
+
+    // ------------------------------------------------------------------
+    // INFO MODAL SYSTEM
+    // Fetches dashboard_info.json once, renders modals on ⓘ click.
+    // ------------------------------------------------------------------
+    let dashboardInfo = null;
+
+    async function loadInfoData() {
+        try {
+            const r = await fetch('/kalman/dashboard_info.json');
+            dashboardInfo = await r.json();
+            console.log('[info] loaded', Object.keys(dashboardInfo).length - 1, 'entries');
+        } catch (e) {
+            console.error('[info] failed to load dashboard_info.json:', e);
+        }
+    }
+    loadInfoData();
+
+    function renderInfoModal(key) {
+        if (!dashboardInfo || !dashboardInfo[key]) {
+            document.getElementById('info-modal-body').innerHTML =
+                '<h3>No info available</h3><p>Entry <code>' + key + '</code> not found in dashboard_info.json.</p>';
+            return;
+        }
+        const e = dashboardInfo[key];
+        const futureList = (e.future_path || []).map(x => '<li>' + x + '</li>').join('');
+        const html = `
+            <h3>${e.title || key}</h3>
+            <h4>What it is</h4>
+            <p>${e.what || ''}</p>
+            <h4>How it's computed</h4>
+            <p>${e.how || ''}</p>
+            <h4>Why it matters / future path</h4>
+            <p>${e.why || ''}</p>
+            ${futureList ? '<ul>' + futureList + '</ul>' : ''}
+            <div class="meta-line">
+                ${e.see_code ? '◆ ' + e.see_code + '<br>' : ''}
+                ${e.paper_ref ? '◆ Paper: ' + e.paper_ref : ''}
+            </div>
+        `;
+        document.getElementById('info-modal-body').innerHTML = html;
+    }
+
+    function openInfoModal(key) {
+        renderInfoModal(key);
+        document.getElementById('info-modal-backdrop').classList.add('open');
+    }
+    function closeInfoModal() {
+        document.getElementById('info-modal-backdrop').classList.remove('open');
+    }
+
+    document.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t.classList && t.classList.contains('info-btn')) {
+            ev.stopPropagation();
+            const key = t.getAttribute('data-info');
+            if (key) openInfoModal(key);
+        }
+    });
+
+    document.getElementById('info-modal-close').addEventListener('click', closeInfoModal);
+    document.getElementById('info-modal-backdrop').addEventListener('click', (ev) => {
+        if (ev.target.id === 'info-modal-backdrop') closeInfoModal();
+    });
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Escape') closeInfoModal();
+    });
+</script>
+</body>
+</html>
