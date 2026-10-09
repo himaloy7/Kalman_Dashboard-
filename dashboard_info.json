@@ -1,0 +1,261 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "last_edited": "2026-10-08",
+    "edit_guide": "Entries with [EDIT THIS] in the 'why' field are written by the assistant as drafts. Shabbir should rewrite those in his own voice before sending anything to Dr. Shahabuddin or Dr. O'Hara."
+  },
+
+  "metric_snr": {
+    "title": "SNR — Signal-to-Noise Ratio",
+    "what": "The instantaneous signal-to-noise ratio on the currently active link, in decibels (dB). It is the ratio of received signal power to the thermal noise floor in the receiver's bandwidth. Higher is better; below the 25 dB handover threshold the link is declared unusable and the RIS fallback is triggered.",
+    "how": "SNR = TX_EIRP + RX_GAIN − HW_LOSS − FSPL(d) − N_floor(BW, NF). FSPL is the Friis free-space path loss at 140 GHz. N_floor = −174 + 10·log10(BW) + NF, computed live from the bandwidth slider. See kalman.py :: los_snr_db() and kalman.py :: noise_floor_dbm().",
+    "why": "[EDIT THIS] This is the number that decides whether the link survives. Everything else on the dashboard — RIS handover, Kalman gain, GRU prediction — is downstream of this one quantity. At 2 GHz bandwidth the noise floor sits at −76 dBm, which matches Table I of Kokkoniemi et al. (2025) to within 0.03 dB. That match matters because it means the rest of the simulation is standing on the paper's own link budget, not on invented numbers.",
+    "see_code": "kalman.py :: los_snr_db(), noise_floor_dbm()",
+    "paper_ref": "Table I, p. 3",
+    "future_path": [
+      "Replace the Friis FSPL model with a ray-traced channel at 140 GHz once Dr. O'Hara's measurement campaign produces site-specific data.",
+      "Add atmospheric absorption (reduced ITU-R P.676) as a live term rather than a static constant — planned for Patch 5.",
+      "On the RFSoC: SNR feeds the R_k adaptation loop in the PL fabric at microsecond cadence."
+    ]
+  },
+
+  "metric_prob": {
+    "title": "AI P(Blockage) — GRU Blockage Probability",
+    "what": "The GRU's prediction that the link is either blocked now or about to be blocked within the next two samples. Range [0, 1]. Above 0.7 the system declares a handover condition and switches to the RIS path.",
+    "how": "A 1-layer GRU (16 hidden units) takes a sliding window of the last N SNR samples (N is user-selectable, 5–16) and outputs a scalar probability. The model was trained offline on a synthetic 140 GHz channel model with Rician fading and bursty blockage, then exported to ONNX Runtime and served on CPU. See blockage_net.py :: infer_blockage() and train_blockage_gru.py.",
+    "why": "[EDIT THIS] The paper identifies ML-based blockage prediction as an open problem (p. 6). This is a concrete instance of that problem: not just detecting a blockage after the SNR collapses, but firing the handover trigger two frames early. Two frames at 60 ms per frame is 120 ms of lead time — enough for the network controller to pre-configure the RIS before the LOS path is actually lost.",
+    "see_code": "blockage_net.py :: infer_blockage(), train_blockage_gru.py",
+    "paper_ref": "p. 5–6, 'ML-Based Routing'",
+    "future_path": [
+      "Retrain v2 on harder data: Doppler-induced fading coherence, atmospheric absorption at multiple humidities — planned for Patch 4.",
+      "Port to Vitis AI DPU on the RFSoC PL once the algorithm is frozen in float (per brief pp. 22–23).",
+      "Evaluate against empirical blockage traces from Dr. O'Hara's testbed."
+    ]
+  },
+
+  "metric_link": {
+    "title": "Active Link Route",
+    "what": "The currently selected physical path between base station and aerial node. One of three states: LOS (direct line-of-sight), RIS (reflected off the reconfigurable intelligent surface), or DOWN (no path above threshold).",
+    "how": "Decision logic in kalman.py :: process_kalman_step(): LOS is used if los_snr ≥ 25 dB. Otherwise RIS is used if ris_snr ≥ 25 dB. Otherwise DOWN. This matches the physical role of a RIS as an outage fallback, not a preferred route.",
+    "why": "[EDIT THIS] This is where the paper's architecture actually becomes a system. The paper describes RIS as enabling non-LOS backhaul connectivity when LOS is blocked (p. 2, p. 5). The dashboard makes that decision visible in real time. When the RIS is dragged from the midpoint of the path toward either endpoint, n_eff drops and the RIS SNR rises — and this card flips from DOWN to RIS. That single flip is the paper's whole RIS argument, demonstrated in 30 seconds.",
+    "see_code": "kalman.py :: process_kalman_step() — link selection block",
+    "paper_ref": "p. 2, p. 5",
+    "future_path": [
+      "Add multi-hop routing across multiple RIS surfaces once the mesh topology is modeled.",
+      "Integrate with the paper's RL-based routing layer (p. 6) so handover decisions become learned policies, not fixed thresholds.",
+      "On the RFSoC: handover becomes a PS-level interrupt driven by the PL's blockage flag."
+    ]
+  },
+
+  "metric_gain": {
+    "title": "‖K‖_F — Kalman Gain Frobenius Norm",
+    "what": "The Frobenius norm of the 3×2 Kalman gain matrix. It quantifies how much the EKF trusts the incoming measurement versus its own prediction. High norm = trust the sensor. Low norm = trust the model.",
+    "how": "K_k = P_k⁻ H_kᵀ (H_k P_k⁻ H_kᵀ + R_k)⁻¹. The Frobenius norm ‖K‖_F = sqrt(sum of squared entries). Computed in kalman.py :: EKF3State.step(). The 3×2 shape comes from a 3-state [θ, ω, R] hidden state and a 2-state Cartesian measurement [x, y].",
+    "why": "[EDIT THIS] This number is the filter's self-awareness. When the link is clean, K is large — the EKF is confident and listens to the measurement. When blockage hits and R_k inflates to 30 or 200, K drops toward zero — the filter stops trusting the noisy sensor and coasts on its own kinematic prediction. That transition is exactly what the brief describes on pp. 21–22: 'the positional Kalman Gain drops asymptotically toward zero to isolate the state from erratic measurement noise spikes.'",
+    "see_code": "kalman.py :: EKF3State.step()",
+    "paper_ref": "Brief pp. 21–22",
+    "future_path": [
+      "Expose K_k per-element (not just norm) so you can watch which state component is trusted or discounted.",
+      "On the RFSoC: K_k computation becomes a systolic-array matrix inversion in the PL fabric, targeting deterministic microsecond loops."
+    ]
+  },
+
+  "metric_omega": {
+    "title": "ω̂ — Angular Velocity Estimate",
+    "what": "The EKF's estimate of the aerial node's angular velocity around the base station, in radians per second. This is a hidden state — it is not directly measured, only inferred from the sequence of noisy position measurements.",
+    "how": "Part of the 3-state EKF hidden state x = [θ, ω, R]. The filter predicts ω stays constant between steps (constant-velocity model) and corrects it from Cartesian position residuals. See kalman.py :: EKF3State.step() — second element of the state vector.",
+    "why": "[EDIT THIS] Being able to read off ω̂ live is the payoff of using a state-space filter instead of just smoothing the measurements. The raw beam would jitter; the filter gives you the underlying motion. This is the quantity that a beam-steering controller would actually consume — you point the antenna using the *velocity* estimate, not the noisy *position* estimate, so you can lead the target instead of chasing it.",
+    "see_code": "kalman.py :: EKF3State.step(), x[1]",
+    "paper_ref": "Brief p. 3, state-space tracking",
+    "future_path": [
+      "Extend to 6D (3 position + 3 velocity) to match the brief's RFSoC target state vector.",
+      "Feed ω̂ into a predictive beam-steering controller that pre-aims the antenna."
+    ]
+  },
+
+  "metric_range": {
+    "title": "R̂ — Range Estimate",
+    "what": "The EKF's estimate of the straight-line distance between base station and aerial node, in meters. Like ω̂, it is a hidden state inferred from Cartesian measurements.",
+    "how": "Third element of the 3-state EKF hidden state x = [θ, ω, R]. It is recovered from the Cartesian measurement through the non-linear measurement model h(x) = [R·cos θ, R·sin θ] and its analytic Jacobian. See kalman.py :: EKF3State._h() and _H().",
+    "why": "[EDIT THIS] R̂ is what makes this a genuine EKF rather than a linear Kalman filter. The measurement is in Cartesian coordinates (x, y), but the state is in polar coordinates (θ, R). Converting between them requires the non-linear h(x) and its Jacobian H(x), which depends on the current state estimate. Without the EKF linearization you cannot close the loop between the polar state and the Cartesian sensor.",
+    "see_code": "kalman.py :: EKF3State._h(), _H()",
+    "paper_ref": "Brief pp. 14–15, EKF linearization",
+    "future_path": [
+      "Add range-rate (Ṙ) as a fourth state for higher-order kinematic tracking.",
+      "Feed R̂ into the RIS phase-shift optimization loop — the RIS needs to know the geometry to steer the reflected beam."
+    ]
+  },
+
+  "metric_neff": {
+    "title": "n_eff — RIS Bistatic Path-Loss Exponent",
+    "what": "The effective end-to-end path-loss exponent for the RIS-reflected link. Ranges from 2 (RIS at an endpoint, behaves like free space) to 4 (RIS equidistant from both ends, double the free-space loss). Currently displayed as a live readout with color coding: green ≤ 2.5, yellow 2.5–3.5, red > 3.5.",
+    "how": "n_eff = 2 + 2·(4·d1·d2 / D²), where d1 = base→RIS distance, d2 = RIS→drone distance, D = d1 + d2. Derived from the bistatic radar range equation, which has path loss proportional to (d1·d2)². At d1=d2=D/2 this gives n=4; as d1→0 it converges to n=2. Both endpoints match the paper's stated cases (p. 4). See kalman.py :: ris_snr_db().",
+    "why": "[EDIT THIS] This is the single most paper-aligned number on the dashboard. Kokkoniemi et al. state (p. 4): 'each leg is of equal length and the link can be approximated by a bistatic radar with n = 4 … converging toward 2 when the RIS is very near either the source or receiver.' This card makes that statement literally draggable. Watch the number move as you drag the RIS around the canvas — that's the paper's figure becoming a live readout.",
+    "see_code": "kalman.py :: ris_snr_db() — n_eff derivation and comment block",
+    "paper_ref": "p. 4, RIS path-loss paragraph",
+    "future_path": [
+      "Add a full ray-traced channel model at 140 GHz that accounts for RIS aperture size and non-far-field effects (the paper's Table II simulations relax the far-field assumption).",
+      "Expose n_eff as a control input to the EKF's R_k adaptation — a bad RIS geometry means higher measurement uncertainty."
+    ]
+  },
+
+  "chart_tracking": {
+    "title": "Real-Time EKF Tracking",
+    "what": "Two lines over time: the true beam alignment angle (green, ground truth from the simulator), and the 3-state EKF's estimate (blue, what the filter thinks the angle is). Both in millidegrees.",
+    "how": "Left panel of the 2×2 chart grid. Ground truth comes from a sinusoidal sway + Gaussian jitter model. The EKF estimate comes from the same /api/kalman-step call that drives every other readout. Plotted with Chart.js, 50-frame rolling window.",
+    "why": "[EDIT THIS] This is where you can see the EKF either doing its job or failing. When the filter locks on, the blue line rides the green line with a small lag. When blockage hits and R_k inflates, the blue line detaches and coasts on dead reckoning until the measurement comes back clean. This is exactly the behavioral signature the brief describes on p. 21: 'the EKF tracking loop smoothly filters out high-frequency Gaussian measurement distortions, locking onto the true sinusoidal angular trajectory.'",
+    "see_code": "dashboard.js :: chartTracking",
+    "paper_ref": "Brief p. 21, Panel 1",
+    "future_path": [
+      "Overlay a 2-state linear KF alongside the 3-state EKF to show the difference in tracking lag under jitter.",
+      "Log the RMS tracking error to a downloadable CSV for offline analysis."
+    ]
+  },
+
+  "chart_covariance": {
+    "title": "Error Covariance P_k and Measurement Noise R_k",
+    "what": "Two traces: the trace of the EKF's error covariance matrix Tr(P_k) on the left axis, and the adaptive measurement noise scale R_k on the right axis (log scale). Together these show the filter's self-assessed uncertainty and its trust in the current measurement.",
+    "how": "P_k comes from the Joseph-form covariance update inside EKF3State.step(). R_k is a scalar multiplier on the base measurement noise: R_base = diag([0.25, 0.25]); R_k_effective = R_base × r_scale, where r_scale is set to 1, 4, 30, or 200 depending on link state and GRU blockage probability. See kalman.py :: process_kalman_step() — r_scale block.",
+    "why": "[EDIT THIS] P_k ballooning while R_k spikes is the exact visual signature of the filter correctly handling a blackout. It stops trusting the sensor (R_k up), which means it stops using the measurements (K_k down), which means its uncertainty grows (P_k up) — and it coasts on the model until the measurement is clean again. Any reviewer familiar with Kalman filters will recognize this pattern immediately. It is the brief's pp. 21–22 narrative in one chart.",
+    "see_code": "kalman.py :: EKF3State.step(), process_kalman_step() — r_scale block",
+    "paper_ref": "Brief pp. 21–22, Panel 4",
+    "future_path": [
+      "Compare fixed-R_k vs adaptive-R_k on the same run to demonstrate why adaptation matters.",
+      "Expose the r_scale tiers as user-tunable sliders for experimental exploration."
+    ]
+  },
+
+  "chart_snr": {
+    "title": "Live SNR Decomposition",
+    "what": "Three SNR traces over time: LOS SNR (green), RIS SNR (purple), and the currently active SNR (orange). The horizontal dashed line at 25 dB is the handover threshold.",
+    "how": "Computed live inside process_kalman_step() using los_snr_db() and ris_snr_db(). Plotted on a −20 to +60 dB axis to leave headroom for extreme cases. This chart previously existed only in the offline snapshot PNG — it is now a live panel.",
+    "why": "[EDIT THIS] This chart makes the RIS handover decision legible in real time. Watch green (LOS) drop below the threshold line while purple (RIS) climbs above it — that's the moment the 'Active Link Route' card flips from LOS to RIS, and the moment the paper's architecture is doing exactly what it's supposed to. Before this chart existed, you could only see the decision, not the two competing SNRs that drive it.",
+    "see_code": "dashboard.js :: chartSnr",
+    "paper_ref": "Table I, p. 3 (link budget); p. 4 (RIS SNRs)",
+    "future_path": [
+      "Add a fourth trace for the *best* RIS among multiple surfaces once multi-RIS selection is implemented.",
+      "Overlay atmospheric absorption contributions as a stacked area once absorption zones land."
+    ]
+  },
+
+  "chart_neff": {
+    "title": "Bistatic RIS Path-Loss Exponent",
+    "what": "The live value of n_eff over time, on a 1.8–4.2 axis. Flat at 4.0 when the RIS is equidistant; drops toward 2.0 as the RIS approaches either endpoint.",
+    "how": "Same n_eff value shown in the telemetry card, plotted on a rolling window. See kalman.py :: ris_snr_db().",
+    "why": "[EDIT THIS] This is the chart that most directly reproduces a paper statement. When you drag the RIS across the canvas and watch this line move, you are watching the exact quantity the paper describes on p. 4: 'the effective end-to-end path loss exponent reduces, converging toward 2 when the RIS is very near either the source or receiver.' No simulation shortcut, no hand-waving — the same bistatic-radar derivation, evaluated live.",
+    "see_code": "dashboard.js :: chartNeff",
+    "paper_ref": "p. 4",
+    "future_path": [
+      "Add a second y-axis showing the corresponding RIS SNR improvement in dB, so the two effects are visible together.",
+      "Extend to multi-hop: n_eff for a base→RIS₁→RIS₂→drone link, which should converge differently."
+    ]
+  },
+
+  "header_topology": {
+    "title": "Compute Topology Note",
+    "what": "A short note explaining why the deployed GRU runs on CPU rather than GPU, and how that choice mirrors the eventual RFSoC deployment.",
+    "how": "Manual text. Explains that at ~2,000 parameters the GRU has insufficient SIMT parallelism to amortize host-to-device transfer, so CPU inference is already sub-millisecond. The same reasoning drives eventual mapping to the RFSoC's PL fabric rather than a GPU co-processor.",
+    "why": "[EDIT THIS] This block exists to answer the question 'why isn't this on a GPU?' before it's asked. The answer is architectural: the RFSoC is not a GPU, and the algorithm as designed doesn't need one. What it needs is deterministic, co-located compute — which is what the PL fabric provides. The dashboard's CPU-only GRU is the honest floating-point reference; the RFSoC will be the fixed-point realization of the same algorithm, benchmarked against this reference.",
+    "see_code": "blockage_net.py, dashboard.html — header block",
+    "paper_ref": "Brief pp. 22–23 (PyTorch vs RFSoC comparison table)",
+    "future_path": [
+      "Replace this paragraph with a link to the actual HLS synthesis report once the RFSoC port exists.",
+      "Add a latency measurement: report the observed per-request CPU inference time so the number is not just asserted."
+    ]
+  },
+
+  "header_rfsoc": {
+    "title": "RFSoC Integration Path",
+    "what": "A note describing how the dashboard's /api/kalman-step endpoint accepts external geometry and measurements, so an RFSoC-side UDP forwarder can replace the scene simulator without code changes to the backend.",
+    "how": "Manual text. References the XCZU48DR testbed and describes the intended data flow: RFSoC emits LOS/RIS geometry over UDP → the dashboard's /api/kalman-step receives it as JSON → the EKF and GRU run against real measurements instead of simulated ones.",
+    "why": "[EDIT THIS] The reason this matters is that it turns the dashboard from a demo into a diagnostic tool for the eventual RFSoC deployment. Once real measurements are flowing in, this same UI shows whether the EKF's adaptive R_k logic correctly tracks the paper's 5–12 dB noise figure regime, whether the GRU transfers from synthetic training to empirical sub-THz measurements, and where the algorithm breaks. That is the deployment-validation step that converts a behavioral baseline into a hardware-anchored result.",
+    "see_code": "dashboard.html — RFSoC paragraph, kalman.py :: process_kalman_step()",
+    "paper_ref": "Brief p. 15 onwards, hardware-software co-design",
+    "future_path": [
+      "Write the UDP forwarder as a small Python script on the RFSoC's ARM PS, emitting JSON to the dashboard endpoint.",
+      "Add a 'Live Hardware' toggle to the scene editor that disables the canvas simulator and accepts only external geometry.",
+      "Log all RFSoC-sourced runs to disk for offline comparison against simulated runs."
+    ]
+  },
+
+  "spec_table": {
+    "title": "AI-EKF Specifications",
+    "what": "A quick reference table listing the key parameters of the hybrid AI-Kalman system: input state shape, core algorithm, GRU dimensions, target hardware, and fixed-point precision.",
+    "how": "Manual table. Dimensions match blockage_net.py and the training script's metadata; hardware and precision match the research brief.",
+    "why": "[EDIT THIS] This table is a talking point, not a computation. Every row is a claim that should be verifiable from the code and the brief. If a row ever stops being true — for example, if the GRU hidden size changes, or if the fixed-point precision is revised — the table must be updated in the same commit. It is the dashboard's contract with its own documentation.",
+    "see_code": "blockage_net.py, blockage_gru_meta.json, dashboard.html — spec table",
+    "paper_ref": "Brief p. 18, ap_fixed<32,12>",
+    "future_path": [
+      "Add a column for 'measured / verified' once each row has been empirically validated.",
+      "Expand to a second table listing synthesis resource estimates (DSP48E2 slices, BRAM, LUTs) once HLS synthesis runs."
+    ]
+  },
+
+  "scene_base": {
+    "title": "Base Station (UmiBS)",
+    "what": "The fixed 6G urban microcell base station at the origin. This is the reference point for all geometry — range, angle, and the two RIS leg distances are measured from this point.",
+    "how": "Rendered as a grey square at the canvas's bottom-left. Fixed — it cannot be dragged. Position is set in dashboard.js :: initSceneIfNeeded().",
+    "why": "[EDIT THIS] The base station is where the paper's UMiBS scenario starts. Everything the drone and RIS do is measured relative to this point. Rooftop-mounted in the paper's architecture (p. 2), it is assumed to have the high-gain antenna array and the beamforming capability that mobile nodes cannot afford. The dashboard treats it as the fixed reference; the aerial node and the RIS are the moving parts.",
+    "see_code": "dashboard.js :: scene.base, drawScene()",
+    "paper_ref": "p. 2, UMiBS scenario",
+    "future_path": [
+      "Add a second base station to model the paper's mesh backhaul topology.",
+      "Add a building/rooftop overlay so the geometry reads as the paper's urban deployment, not a blank canvas."
+    ]
+  },
+
+  "scene_drone": {
+    "title": "Aerial Node (Drone / UAV)",
+    "what": "The moving node — the drone or aerial platform carrying the THz transceiver. Draggable. Its position determines the LOS distance and both RIS leg distances.",
+    "how": "Rendered as a cyan circle. Position is set by the user (mouse drag) plus a small per-frame sway that models aerodynamic jitter. See dashboard.js :: scene.drone, drawScene().",
+    "why": "[EDIT THIS] The aerial node is the reason this whole system is hard. A stationary backhaul link can be aligned once and forgotten. A drone is subject to wind buffeting, structural vibration, and multi-axis mechanical sway — the paper calls these out on p. 5 as the reason beam tracking matters at 140 GHz. Every milliradian of misalignment is a fraction of a degree off boresight, and at THz frequencies that fraction can collapse the link.",
+    "see_code": "dashboard.js :: scene.drone, runSimulationStep()",
+    "paper_ref": "p. 5, beam tracking and misalignment",
+    "future_path": [
+      "Model the drone's motion as an actual trajectory (waypoints, wind model) rather than user drag + sway.",
+      "Add a tilt/orientation indicator so the transceiver's boresight is visible, not just its position."
+    ]
+  },
+
+  "scene_ris": {
+    "title": "RIS — Reconfigurable Intelligent Surface",
+    "what": "A passive reflector array that redirects the THz beam around blockages. Draggable. Multiple RIS surfaces can be added. Each RIS contributes array gain and imposes an additional path-loss penalty that depends on its position between base and drone.",
+    "how": "Rendered as a purple horizontal strip. Click-and-drag to move. The distance from base to RIS (d1) and RIS to drone (d2) feed the bistatic n_eff calculation. See dashboard.js :: scene.ris, computeLinkState(), and kalman.py :: ris_snr_db().",
+    "why": "[EDIT THIS] The RIS is the paper's answer to blockage (p. 2, p. 4). It enables non-LOS backhaul by acting as a programmable mirror — but at a cost. The end-to-end path loss exponent is n=4 when the RIS is equidistant, meaning a full extra 20·log10(D) dB of loss relative to direct LOS. Drag the RIS off-center and the penalty shrinks toward n=2. That trade-off between geometry and SNR is the paper's central RIS insight, and this object is where you watch it happen.",
+    "see_code": "dashboard.js :: computeLinkState(), drawScene(); kalman.py :: ris_snr_db()",
+    "paper_ref": "p. 2 (RIS as mesh element), p. 4 (path loss exponent)",
+    "future_path": [
+      "Model the RIS as an N×N element array with a configurable phase mask, so beam steering is explicit.",
+      "Add RIS reflection efficiency (typically 70–90%) as a parameter.",
+      "On the RFSoC: RIS phase-shift optimization becomes a companion loop to the EKF, per brief p. 20."
+    ]
+  },
+
+  "scene_blocker": {
+    "title": "Blocker — Occluder or Reflector",
+    "what": "An object on the canvas that interacts with the LOS beam. Two physics modes: Occluder (blocks the path entirely) and Reflector (bends the path with a specular reflection loss instead of killing it). Motion modes: Static, Linear sweep, Random walk, Orbit base, Orbit drone. Radius and speed are adjustable via right-click.",
+    "how": "Occluder mode: segmentBlocked() returns true if the base→drone segment passes within radius of the blocker center, killing the LOS SNR. Reflector mode: the blocker does not occlude; instead, firstReflectorOnPath() detects it, and a −15 dB specular reflection penalty is applied while the link survives. See dashboard.js :: segmentBlocked(), firstReflectorOnPath(), and kalman.py :: process_kalman_step() — reflector_los_penalty_db.",
+    "why": "[EDIT THIS] The paper identifies two blockage mechanisms on p. 5: physical occlusion by pedestrians, vehicles, and temporary structures, and specular multipath off metal surfaces (rooftop AC units, structural steel). This object lets you model both. Set it to occluder mode, set it to linear sweep at 1.2 m/s (walking speed), and watch the GRU predict the blockage before the SNR drops. Set it to reflector mode, place it on the LOS path, and watch the link survive with a 15 dB penalty instead of going dark. Two distinct behaviors, two distinct link signatures, one object type.",
+    "see_code": "dashboard.js :: makeBlocker(), firstReflectorOnPath(), stepOneObject()",
+    "paper_ref": "p. 5, blockage and specular multipath",
+    "future_path": [
+      "Add reflection coefficient as a slider (currently fixed at 15 dB).",
+      "Model occluders with irregular shapes (rectangle for vehicles, multi-circle for pedestrians in groups).",
+      "Feed blocker trajectories into a supervised-learning link-quality predictor, matching the paper's p. 6 routing discussion."
+    ]
+  },
+
+  "scene_absorption": {
+    "title": "Absorption Zone — Atmospheric Molecular Absorption",
+    "what": "An irregular polygon representing a volume of air with elevated molecular absorption. Any beam path that crosses the polygon picks up extra attenuation proportional to the path length inside the polygon and the specific attenuation α (dB/km) at 140 GHz. The zone has humidity and temperature sliders, both of which affect α. Rendered as a translucent yellow-grey dashed polygon.",
+    "how": "α is computed live from ITU-R P.676-13 (08/2022) Annex 1 equations (1)–(9), using a reduced line table: 2 oxygen lines (118.75, 60.43 GHz) and 2 water-vapour lines (22.24, 183.31 GHz). Compared to the full 74-line model, this reduced table matches within 5% at 140 GHz dry air, 10% at the 60 GHz O₂ band, and 20% at the 183 GHz H₂O line; it under-estimates by ~50–80% at 140 GHz with high humidity because the dropped H₂O lines contribute mostly there. The polygon is procedurally generated (8–12 vertices jittered around an ellipse). Path-inside-polygon length is computed by uniform sampling in dashboard.js. See dashboard.js :: reducedP676AlphaDbPerKm() and kalman.py :: itu_p676_reduced_alpha_db_per_km().",
+    "why": "[EDIT THIS] The paper states that molecular absorption becomes a 'considerable LOS loss' over long-distance links (p. 3), not short backhaul hops. This zone lets you verify that claim numerically. At 140 GHz and RH=60%, α is roughly 2.5 dB/km. Over a 50 m link, the absorption contribution is ~0.125 dB — negligible compared to the ~110 dB free-space path loss at that distance. Increase the zone's humidity to 90% and α rises to ~12 dB/km, still under 1 dB over 50 m. The result is the paper's own conclusion, reproduced live: absorption is a long-range problem, not a short-backhaul one.",
+    "see_code": "dashboard.js :: reducedP676AlphaDbPerKm(), absorptionLossDb(); kalman.py :: itu_p676_reduced_alpha_db_per_km()",
+    "paper_ref": "p. 3, atmospheric effects; ITU-R P.676-13",
+    "future_path": [
+      "Upgrade to full P.676 (all 74 spectral lines) and add a frequency slider so the O₂ peak at 60 GHz and the H₂O peak at 183 GHz become visible.",
+      "Add a side-by-side comparison between reduced and full P.676 as a demo feature, to make the 10% approximation accuracy explicit.",
+      "Layer a rain attenuation model (ITU-R P.838) on top for outdoor scenarios."
+    ]
+  }
+}
